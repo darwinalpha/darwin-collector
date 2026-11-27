@@ -1,0 +1,57 @@
+"""Built-in defaults.
+
+These are code constants, not values read from any configuration file.
+Callers may override them by passing a ``Policies`` object.
+"""
+
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_RETRY_BASE_DELAY_MS = 500
+DEFAULT_RETRY_BACKOFF = 2.0
+DEFAULT_REAUTH_ONCE = True
+
+DEFAULT_INTERVAL_MS = 500
+DEFAULT_COOLDOWN_MS = 5_000
+
+DEFAULT_MAX_ITERATIONS = 100
+DEFAULT_MAX_PAGES = 100
+DEFAULT_PAGE_SIZE = 500
+DEFAULT_DATE_FIELD = "trade_date"
+DEFAULT_MAX_EMPTY_CHUNKS = 3
+
+# FTShare: token rotation / request defaults (code constants, not config).
+DEFAULT_FTSHARE_BASE_URL = "https://market.ft.tech/gateway/"
+DEFAULT_FTSHARE_TIMEOUT = 60
+DEFAULT_FTSHARE_MAX_TOKENS_RETRIES = 3
+
+# FinzData: API-key client defaults (code constants, not config).
+DEFAULT_FINZDATA_TIMEOUT = 60
+
+# Key rotation (code constants, overridable via KeyRotationPolicy).
+DEFAULT_KEY_COOLDOWN_SECONDS = 30.0
+DEFAULT_KEY_AUTH_COOLDOWN_SECONDS = 300.0
+DEFAULT_KEY_MAX_ROTATIONS = 3
+
+# SDK capability flags declared by adapters.
+FTSHARE_SDK_PAGINATES = True  # fetch_all()/get_paginated() paginate internally
+
+__all__ = [
+    "DEFAULT_MAX_ATTEMPTS",
+    "DEFAULT_RETRY_BASE_DELAY_MS",
+    "DEFAULT_RETRY_BACKOFF",
+    "DEFAULT_REAUTH_ONCE",
+    "DEFAULT_INTERVAL_MS",
+    "DEFAULT_COOLDOWN_MS",
+    "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MAX_PAGES",
+    "DEFAULT_PAGE_SIZE",
+    "DEFAULT_DATE_FIELD",
+    "DEFAULT_MAX_EMPTY_CHUNKS",
+    "DEFAULT_FTSHARE_BASE_URL",
+    "DEFAULT_FTSHARE_TIMEOUT",
+    "DEFAULT_FTSHARE_MAX_TOKENS_RETRIES",
+    "DEFAULT_FINZDATA_TIMEOUT",
+    "DEFAULT_KEY_COOLDOWN_SECONDS",
+    "DEFAULT_KEY_AUTH_COOLDOWN_SECONDS",
+    "DEFAULT_KEY_MAX_ROTATIONS",
+    "FTSHARE_SDK_PAGINATES",
+]

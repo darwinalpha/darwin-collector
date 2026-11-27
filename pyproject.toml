@@ -1,0 +1,57 @@
+[project]
+name = "darwin-collector"
+version = "0.1.0"
+description = "Configuration-free data collection library: register adapters, run one collection task, return a result"
+readme = "README.md"
+authors = [
+    { name = "Hong", email = "sardineclub@126.com" }
+]
+license = "MIT"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+tushare = ["tushare>=1.2"]
+ftshare = ["ftshare"]
+tickflow = ["tickflow"]
+baostock = ["baostock"]
+ohlcvault = ["ohlcvault[pandas]"]
+finzdata = ["finzdata>=0.1.19"]
+yfinance = ["yfinance>=1.8.0"]
+all = [
+    "tushare>=1.2",
+    "ftshare",
+    "tickflow",
+    "baostock",
+    "ohlcvault[pandas]",
+    "finzdata>=0.1.19",
+    "yfinance>=1.8.0",
+]
+test = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/darwinalpha/darwin-collector"
+Repository = "https://github.com/darwinalpha/darwin-collector"
+Issues = "https://github.com/darwinalpha/darwin-collector/issues"
+
+[build-system]
+requires = ["uv_build>=0.13.10,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v"
