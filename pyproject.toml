@@ -1,6 +1,6 @@
 [project]
 name = "darwin-collector"
-version = "0.1.2"
+version = "0.1.3"
 description = "Configuration-free data collection library: register adapters, run one collection task, return a result"
 readme = "README.md"
 authors = [
