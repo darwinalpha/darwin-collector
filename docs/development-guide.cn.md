@@ -78,6 +78,12 @@ AdapterManager.collect(request)
 - 轮换状态保存在适配器实例上，常驻 worker 跨 `collect()` 复用时冷却状态延续，无需共享存储；
 - 通过 `Policies(key_rotation=...)` 注入自定义策略；`Executor.execute()` 在 `ensure_ready()` 前调用 `adapter.configure(policies)` 完成注入。
 
+### 并行 lane
+
+`AdapterManager.collect_parallel(requests, max_workers=None)` 只是给「把一次下载拆成多个单 key 子请求」的调用方提供薄封装。它用 `BaseAdapter.resolve_key(credentials)` 要求每个请求恰好一个 key，然后在线程池里调用 `collect(request, key=key)`。实例按 `(source, key)` 缓存，每条 lane 拥有独立 client 与冷却状态，`close()` 会释放全部实例。结果与输入顺序一致，首个异常在已启动 lane 结束后抛出。
+
+默认的 `collect()` 仍走串行轮换。并行请求必须只有一个 key，lane 内 `_run_with_keys()` 无法轮换，两种模式由构造保证互斥。日期区间拆分与结果合并由调用方负责，collector 不解析日期参数、也不改动分页逻辑。
+
 ## 6. 会话与 worker
 
 adapter 实例由 `AdapterManager` 缓存，可跨多次 `collect` 复用，`close()` 由宿主在退出时调用。`resolve_backend(source)` 是唯一的后端选择点，当前恒为 `direct`；worker 实现时只需在这里切换，调用方与适配器无需改动。

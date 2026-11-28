@@ -123,6 +123,32 @@ class BaseAdapter(ABC):
         )
         return self._key_pool
 
+    @classmethod
+    def resolve_key(cls, credentials: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Return the single API key in ``credentials``, if there is exactly one.
+
+        Parallel fan-out pins one request to one key; accepting several keys
+        here would let rotation and per-key lanes overlap. Keyless sources
+        return ``None``.
+        """
+        if not cls.key_fields:
+            return None
+        data = credentials or {}
+        raw: Any = None
+        for name in cls.key_fields:
+            value = data.get(name)
+            if value not in (None, "", [], ()):
+                raw = value
+                break
+        keys = split_keys(raw)
+        if not keys:
+            return None
+        if len(keys) > 1:
+            raise ValueError(
+                f"{cls.__name__} 并行模式要求每个请求只含一个 key，收到 {len(keys)} 个"
+            )
+        return keys[0]
+
     def _current_key(self) -> Optional[str]:
         if self._key_pool is None:
             return None

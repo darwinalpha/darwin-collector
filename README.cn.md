@@ -235,6 +235,30 @@ request = CollectRequest(
 )
 ```
 
+### 并行执行（每个请求一个 key）
+
+同一个源需要加速下载时，由调用方把日期区间拆成多个子请求，每个子请求只带一个 key，再并发执行：
+
+```python
+results = manager.collect_parallel([
+    CollectRequest(
+        source="tushare", method="daily",
+        params={"ts_code": "000001.SZ", "start_date": "20240101", "end_date": "20240110"},
+        credentials={"token": "key1"},
+    ),
+    CollectRequest(
+        source="tushare", method="daily",
+        params={"ts_code": "000001.SZ", "start_date": "20240111", "end_date": "20240120"},
+        credentials={"token": "key2"},
+    ),
+])
+```
+
+- 每个 key 使用独立的 adapter 实例与会话；区间拆分与结果合并由调用方负责。
+- 返回结果与输入顺序一致；多 key 或无 key 的请求会被拒绝，因此串行轮换与并行分键不会混用。
+- 任一 lane 失败时，等待已启动的 lane 结束后抛出首个异常。默认并发数为 `min(请求数, 8)`，可用 `max_workers=` 覆盖。
+- 仅支持带 key 的数据源（tushare / ftshare / tickflow / finzdata）。
+
 错误映射属于适配器契约：FinzData 的 `401` 映射认证错误、`429` 映射限流、`5xx` 映射网络错误，`403` 映射为不重试的数据错误；yfinance 的 `YFRateLimitError` 映射限流，数据缺失或参数无效映射数据错误，连接 / 超时映射网络错误。
 
 ---

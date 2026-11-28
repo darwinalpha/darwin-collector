@@ -86,6 +86,12 @@ Library behavior:
 - Rotation state lives on the adapter instance, so a resident worker keeps cooldowns across `collect()` calls with no shared storage;
 - Customize via `Policies(key_rotation=...)`; `Executor.execute()` calls `adapter.configure(policies)` before `ensure_ready()`.
 
+### Parallel lanes
+
+`AdapterManager.collect_parallel(requests, max_workers=None)` is a thin fan-out for callers that split one download into single-key sub-requests. It calls `BaseAdapter.resolve_key(credentials)` to require exactly one key per request, then runs `collect(request, key=key)` in a thread pool. Instances are cached by `(source, key)`, so each lane keeps its own client and cooldown state; `close()` releases all of them. Results follow input order and the first error propagates after started lanes finish.
+
+Serial rotation stays the default `collect()` path. Because a parallel request must contain exactly one key, `_run_with_keys()` cannot rotate inside a lane; the two modes are mutually exclusive by construction. The caller owns date-range splitting and result merging — the collector never parses date parameters or changes pagination.
+
 ---
 
 ## 6. Sessions and worker

@@ -235,6 +235,30 @@ request = CollectRequest(
 )
 ```
 
+### Parallel execution (one key per request)
+
+For a single source, the caller can split a download into date sub-ranges and run them concurrently, one key per sub-request:
+
+```python
+results = manager.collect_parallel([
+    CollectRequest(
+        source="tushare", method="daily",
+        params={"ts_code": "000001.SZ", "start_date": "20240101", "end_date": "20240110"},
+        credentials={"token": "key1"},
+    ),
+    CollectRequest(
+        source="tushare", method="daily",
+        params={"ts_code": "000001.SZ", "start_date": "20240111", "end_date": "20240120"},
+        credentials={"token": "key2"},
+    ),
+])
+```
+
+- Each key gets an isolated adapter instance and session; the caller owns the split and any later merge.
+- Results follow input order. A multi-key or keyless request is rejected, so serial rotation and parallel lanes never overlap.
+- The first lane error propagates after all started lanes finish. Default concurrency is `min(requests, 8)`; override with `max_workers=`.
+- Supported for keyed sources only (tushare, ftshare, tickflow, finzdata).
+
 Error mapping is part of the adapter contract: FinzData maps `401` to auth error, `429` to rate limit, `5xx` to network error, and `403` to a data error that is not retried. yfinance maps `YFRateLimitError` to rate limit, missing / invalid data to data errors, and connection / timeout errors to network errors.
 
 ---
