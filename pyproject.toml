@@ -1,6 +1,6 @@
 [project]
 name = "darwin-collector"
-version = "0.1.0"
+version = "0.1.1"
 description = "Configuration-free data collection library: register adapters, run one collection task, return a result"
 readme = "README.md"
 authors = [
@@ -45,6 +45,7 @@ test = ["pytest>=7.0"]
 Homepage = "https://github.com/darwinalpha/darwin-collector"
 Repository = "https://github.com/darwinalpha/darwin-collector"
 Issues = "https://github.com/darwinalpha/darwin-collector/issues"
+"Chinese Documentation" = "https://github.com/darwinalpha/darwin-collector/blob/main/README.cn.md"
 
 [build-system]
 requires = ["uv_build>=0.13.10,<0.14.0"]

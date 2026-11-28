@@ -1,9 +1,12 @@
-"""Contract tests for the public library surface."""
+"""Contract tests for the public library surface and bilingual docs."""
 
-import inspect
+import re
+from pathlib import Path
 
 import darwin_collector as dc
 from darwin_collector.adapters.base import BaseAdapter
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_manager_public_methods_are_new_only():
@@ -37,3 +40,38 @@ def test_no_logger_or_config_dependency_in_source():
         assert "darwin_config" not in text, path
         assert "darwin_logger" not in text, path
         assert "adapter.json" not in text, path
+
+
+def test_english_docs_have_no_chinese_except_language_switch() -> None:
+    han = re.compile(r"[\u4e00-\u9fff]")
+    targets = [
+        ROOT / "README.md",
+        ROOT / "docs" / "development-guide.md",
+        ROOT / "examples" / "README.md",
+    ]
+    for path in targets:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "简体中文" in line:
+                continue
+            assert not han.search(line), f"Chinese text in {path.name}:{number}"
+
+
+def test_chinese_docs_exist() -> None:
+    for path in (
+        ROOT / "README.cn.md",
+        ROOT / "docs" / "development-guide.cn.md",
+        ROOT / "examples" / "README.cn.md",
+    ):
+        assert path.exists(), path
+        assert re.search(r"[\u4e00-\u9fff]", path.read_text(encoding="utf-8"))
+
+
+def test_root_readme_uses_absolute_language_links() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "](README.cn.md)" not in text
+    assert "https://github.com/darwinalpha/darwin-collector/blob/main/README.cn.md" in text
+
+    chinese = (ROOT / "README.cn.md").read_text(encoding="utf-8")
+    assert "](README.md)" not in chinese
+    assert "https://github.com/darwinalpha/darwin-collector/blob/main/README.md" in chinese
+

@@ -1,34 +1,45 @@
 # darwin-collector
 
-一个只做**数据采集**的库：注册数据源适配器，把一次采集任务跑完，返回统一的结果对象。
+[English](https://github.com/darwinalpha/darwin-collector/blob/main/README.md) · [简体中文](https://github.com/darwinalpha/darwin-collector/blob/main/README.cn.md)
 
-它不读配置文件、不写文件、不清洗数据、不做路由和故障切换。调度、配置解析、写入落盘由上层负责。
+A library that does **data collection only**: register data-source adapters, run one collection task to completion, and return a unified result object.
 
-## 设计边界
+It does not read configuration files, write files, clean data, or perform cross-source routing / failover. Scheduling, config parsing, and persistence belong to the caller.
 
-| 负责 | 不负责 |
-| --- | --- |
-| 适配器注册与查找 | 读取 `adapter.json` 或任何配置文件 |
-| 初始化 / 登录 | Writer 写入 |
-| 单次 SDK 调用 `collect_once()` | 清洗 / 去重 |
-| 重试、限流、分页策略 | 跨源路由 / 故障切换 |
-| 多 API key 拆分与轮换 | Worker 进程管理（仅预埋扩展点） |
-| 统一异常与 `CollectResult` | |
+- **Stable, small surface** — one `collect()` entry point, one request and one result contract
+- **Configuration-free** — credentials and parameters are passed in; the library never reads env vars or `adapter.json`
+- **Policy injection** — retry, rate limiting, pagination and API-key rotation are explicit `Policies`
+- **Unified errors** — typed exceptions carry source, method and attempt context
+- **SDKs are optional** — only `pandas` is a hard dependency; each data source is an extra
 
-唯一硬依赖是 `pandas`；各数据源 SDK 按需安装。库内自带的默认设置是代码常量，其余参数由调用方解析后传入。
-
-## 安装
+Python >= 3.10.
 
 ```bash
-pip install -e .
-pip install -e '.[tushare]'       # 按需安装单个 SDK
-pip install -e '.[ftshare,tickflow,baostock,ohlcvault,finzdata,yfinance]'
-pip install -e '.[finzdata]'      # FinzData（官方 finzdata SDK）
-pip install -e '.[yfinance]'      # yfinance（Yahoo Finance 数据）
-pip install -e '.[all]'           # 一次安装全部
+pip install darwin-collector                       # core (pandas only)
+pip install 'darwin-collector[tushare]'            # one SDK
+pip install 'darwin-collector[finzdata,yfinance]'  # several SDKs
+pip install 'darwin-collector[all]'                # every SDK
+pip install 'darwin-collector[test]'               # with pytest
 ```
 
-## 最小用法
+---
+
+## 1. Scope
+
+| In scope | Out of scope |
+| --- | --- |
+| Adapter registration and lookup | Reading `adapter.json` or any config file |
+| Initialization / login | Writer persistence |
+| One SDK call through `collect_once()` | Cleaning / deduplication |
+| Retry, rate-limit and pagination policies | Cross-source routing / failover |
+| Multi API-key splitting and rotation | Worker process management (extension point only) |
+| Typed exceptions and `CollectResult` | Environment variable loading |
+
+Built-in defaults are code constants in `defaults.py`; all other values are supplied by the caller. See [the development guide](docs/development-guide.md) for the execution chain and adapter contract.
+
+---
+
+## 2. Quick start
 
 ```python
 from darwin_collector import AdapterManager, CollectRequest
@@ -41,38 +52,85 @@ request = CollectRequest(
     source="tushare",
     method="daily",
     params={"ts_code": "000001.SZ", "start_date": "20240101", "end_date": "20240131"},
-    credentials={"token": "..."},   # 上层解析后传入，库不读环境变量
+    credentials={"token": "<your token>"},  # parsed by the caller
 )
 result = manager.collect(request)
 df = result.to_dataframe()
+print(result.row_count, result.chunk_count, result.elapsed_ms)
+manager.close()
 ```
 
-`fake=True` 时适配器不调用真实 SDK，返回空 DataFrame，可用于验证配置与调用链。
+`fake=True` skips `collect_once()` and returns an empty frame, but `ensure_ready()` still runs. For a fully offline dry run, use a small custom adapter:
 
-## 分层位置
+```python
+from darwin_collector import AdapterManager, CollectRequest
+from darwin_collector.adapters.base import BaseAdapter
 
+class DemoAdapter(BaseAdapter):
+    def get_source_name(self):
+        return "demo"
+
+    def collect_once(self, method, **kwargs):
+        raise AssertionError("not called in fake mode")
+
+manager = AdapterManager()
+manager.register("demo", DemoAdapter)
+result = manager.collect(CollectRequest(source="demo", method="daily", fake=True))
+assert result.fake and result.row_count == 0
 ```
-shell 调度 → fetch.py（门面）→ fetcher.py（唤起/采集/调用 Writer）→ darwin-collector → SDK
+
+An unregistered source raises `AdapterNotRegisteredError`; an unsupported SDK method raises `MethodNotSupportedError`.
+
+---
+
+## 3. Core contracts
+
+| Object | Responsibility |
+| --- | --- |
+| `AdapterManager` | Register factories, cache adapter instances, expose `collect()` and `close()` |
+| `CollectRequest` | `source`, `method`, `params`, `options`, `credentials`, `policies`, `fake` |
+| `CollectResult` | `frames`, `attempts`, `elapsed_ms`, `fake`, plus `to_dataframe()`, `to_records()`, `row_count`, `chunk_count` |
+| `Policies` | Optional `RetryPolicy`, `RateLimitPolicy`, `Paginator`, `pagination_mode`, `KeyRotationPolicy` |
+| `BaseAdapter` | Implement `get_source_name()` and `collect_once(method, **kwargs)`; optional `ensure_ready()`, `reauth()`, `close()` |
+
+`CollectResult` has no file path, writer state or cleaning metadata: the caller decides what to do with the DataFrame.
+
+Execution chain:
+
+```text
+AdapterManager.collect(request)
+  -> resolve_backend(source)             # currently always direct
+  -> get_adapter(source)                 # cached instance
+  -> Executor.execute(adapter, request)
+       -> configure(policies)
+       -> ensure_ready(credentials)
+       -> select paginator by pagination_mode
+       -> rate_limit.before_call() + retry.run(collect_once)
+       -> paginate, if framework mode
+       -> CollectResult
 ```
 
-worker 是 collector 的一种可选执行后端，通过 `resolve_backend(source)` 选择。当前恒为 `direct`（本进程直连），分支已预埋但未实现 worker。
+Adapter instances are cached per manager and reused across `collect()` calls. `close()` releases all sessions and is the host's responsibility. `resolve_backend()` is the single backend selection point; it currently returns `direct` (in-process) and reserves the worker branch.
 
-## 当前支持的数据源
+---
 
-| 数据源 | 导入路径 | 凭证（由调用方传入） | 分页模式 |
+## 4. Supported sources
+
+| Source | Import path | Credentials (passed by caller) | Pagination mode |
 | --- | --- | --- | --- |
-| tushare | `adapters.tushare.TushareAdapter` | `{"token": ...}` | framework（反向日期） |
-| ftshare | `adapters.ftshare.FtshareAdapter` | `{"api_keys": [...]}` 或 `{"api_key": ...}` | adapter（SDK 内部翻页）；可切 framework 做 chunk |
-| tickflow | `adapters.tickflow.TickflowAdapter` | `{"token": ...}` | framework（毫秒切片） |
-| baostock | `adapters.baostock.BaostockAdapter` | 无需凭证 | none |
-| ohlcvault | `adapters.ohlcvault.OhlcvaultAdapter` | 可选 `{"mirrors": [...], "snapshot": ...}` | none |
-| finzdata | `adapters.finzdata.FinzdataAdapter` | `{"api_key": ...}`（也接受 `token`） | none；可切 framework 做 chunk |
-| yfinance | `adapters.yfinance.YfinanceAdapter` | 无需凭证；可选 `{"session": ...}` | none；可切 framework 做 chunk |
+| tushare | `darwin_collector.adapters.tushare.TushareAdapter` | `{"token": ...}` | framework (reverse date) |
+| ftshare | `darwin_collector.adapters.ftshare.FtshareAdapter` | `{"api_keys": [...]}` or `{"api_key": ...}` | adapter (SDK paginates internally); opt into framework chunking |
+| tickflow | `darwin_collector.adapters.tickflow.TickflowAdapter` | `{"token": ...}` | framework (millisecond chunks) |
+| baostock | `darwin_collector.adapters.baostock.BaostockAdapter` | none | none |
+| ohlcvault | `darwin_collector.adapters.ohlcvault.OhlcvaultAdapter` | optional `{"mirrors": [...], "snapshot": ...}` | none |
+| finzdata | `darwin_collector.adapters.finzdata.FinzdataAdapter` | `{"api_key": ...}` (`token` also accepted) | none; opt into framework chunking |
+| yfinance | `darwin_collector.adapters.yfinance.YfinanceAdapter` | none; optional `{"session": ...}` | none; opt into framework chunking |
 
-注册与用法一致：
+Registration is identical for every source:
 
 ```python
 from darwin_collector.adapters.baostock import BaostockAdapter
+
 manager.register("baostock", BaostockAdapter)
 result = manager.collect(CollectRequest(
     source="baostock",
@@ -82,46 +140,86 @@ result = manager.collect(CollectRequest(
 ))
 ```
 
-FinzData 直接映射官方 `finzdata.Client` 的方法名，也支持 yfinance 风格别名：
+FinzData uses the official `finzdata.Client` method names (`prices`, `minutes`, `cot`, `futures`, `macro`, `gex`, `fundamentals`, `valuation`, `datasets`, `me`, ...) plus yfinance-style aliases (`history`, `download`):
 
 ```python
 from darwin_collector.adapters.finzdata import FinzdataAdapter
-manager.register("finzdata", FinzdataAdapter)
 
+manager.register("finzdata", FinzdataAdapter)
 result = manager.collect(CollectRequest(
     source="finzdata",
-    method="prices",  # 或 "history" / "download" / "cot" / "minutes" / "gex" 等
+    method="prices",
     params={"symbol": "MSFT", "start": "2025-01-01", "end": "2025-01-31"},
-    credentials={"api_key": "fz_..."},  # 库不读 FINZDATA_API_KEY
+    credentials={"api_key": "<your key>"},  # FINZDATA_API_KEY is never read
 ))
 ```
 
-yfinance 无需 API key；`history` 与 `download` 直接映射官方 SDK：
+yfinance needs no API key. `download`, `history`, `info`, `financials`, `dividends` and other Ticker members map to the official SDK; an empty DataFrame is a normal result, not an error.
+
+---
+
+## 5. Policies and defaults
+
+Pass a `Policies` object in `CollectRequest`; `None` fields use the constants from `defaults.py`.
+
+| Policy | Defaults |
+| --- | --- |
+| `RetryPolicy` | 3 attempts, 500 ms base delay, 2.0 backoff, one re-login on auth error |
+| `RateLimitPolicy` | 500 ms between calls, 5000 ms cooldown (the paginators never sleep themselves) |
+| Pagination | 100 iterations / pages, page size 500, date field `trade_date`, stop after 3 empty chunks |
+| `KeyRotationPolicy` | 30 s rate-limit cooldown, 300 s auth cooldown, max 3 rotations, both error types trigger rotation |
+
+Only rate-limit and network errors are retried. Authentication errors call `reauth()` once and are then raised immediately; data errors are never retried.
 
 ```python
-from darwin_collector.adapters.yfinance import YfinanceAdapter
-manager.register("yfinance", YfinanceAdapter)
+from darwin_collector import CollectRequest, Policies
+from darwin_collector.policies import RateLimitPolicy, RetryPolicy
 
-result = manager.collect(CollectRequest(
-    source="yfinance",
-    method="history",  # 或 "download" / "financials" / "info" / "dividends" 等
-    params={"symbol": "MSFT", "start": "2025-01-01", "end": "2025-01-31"},
-))
+request = CollectRequest(
+    source="tushare", method="daily",
+    params={"ts_code": "000001.SZ"},
+    policies=Policies(
+        retry=RetryPolicy(max_attempts=5, base_delay_ms=200, backoff=1.5),
+        rate_limit=RateLimitPolicy(interval_ms=100, cooldown_ms=2000),
+    ),
+)
 ```
 
-## 多 API key 与轮换
+`pagination_mode` controls who handles paging:
 
-所有需要凭证的数据源（tushare / ftshare / tickflow / finzdata）共享库级的多 key 能力。凭证值中的逗号会自动拆分为多个 key，列表形式也支持：
+| Mode | Behavior |
+| --- | --- |
+| `none` | One `collect_once()` call, no pagination |
+| `adapter` | The SDK already returns the complete result; executor calls it once |
+| `framework` | `collect_once()` returns one page / chunk; the paginator loops |
+
+For `framework` mode, the trigger key in `CollectRequest.options` selects the strategy (checked in this order):
+
+| Option | Strategy |
+| --- | --- |
+| `max_lines` | Reverse-date pagination, replacing `start_date` / `end_date` |
+| `chunk_months` | Calendar-month chunks, replacing `since_ts_millis` / `until_ts_millis` |
+| `chunk_ms` | Day-sized millisecond chunks, replacing `start_time` / `end_time` |
+| `paginate` | Forward page-number pagination, replacing `page` |
+| `chunk_days` | Day-sized chunks, replacing `start_date` / `end_date` |
+
+All chunk strategies are bounded by `max_iterations` / `max_pages` and stop after `max_empty_chunks` consecutive empty results.
+
+---
+
+## 6. Multiple API keys and rotation
+
+Keyed sources (tushare, ftshare, tickflow, finzdata) share a library-level pool. A credential value containing commas is split automatically; lists work too:
 
 ```python
-credentials={"token": "key1, key2, key3"}       # 自动拆成 3 个 key
-credentials={"api_keys": ["k1", "k2"]}          # 等价
+credentials={"token": "key1, key2, key3"}     # three keys
+credentials={"api_keys": ["k1", "k2"]}        # equivalent
 ```
 
-- 遇到**限流**或**认证失败**时自动轮换到下一个 key；失败的 key 进入冷却期，到期后重新可用（不会永久拉黑）。
-- 轮换状态保存在适配器实例上，因此常驻 worker 跨多次 `collect()` 复用同一个池，冷却计时基于单调时钟，无需外部协调。
-- 单 key 时保持原有行为（不内部轮换，交给框架重试层）。
-- 可用 `KeyRotationPolicy` 定制，与其他策略一样通过 `Policies` 注入：
+- On a rate-limit or authentication failure the pool rotates to the next key; the failed key cools down and becomes eligible again automatically — it is never permanently blacklisted.
+- Rotation state lives on the adapter instance, so a resident process reuses the same pool across `collect()` calls. Cooldowns use a monotonic clock and need no external coordination.
+- With a single key the legacy path is preserved: no internal rotation, and the framework retry layer handles the error.
+- Customize the behavior with `KeyRotationPolicy` through `Policies`:
 
 ```python
 from darwin_collector import KeyRotationPolicy, Policies
@@ -137,11 +235,37 @@ request = CollectRequest(
 )
 ```
 
-- `fake=True` 不会实例化 SDK，executor 直接返回空 DataFrame。
-- 适配器的 `close()` 由宿主在退出时统一调用，实例可跨多次 `collect()` 复用；Baostock 的登录会话因此只建立一次。
-- FinzData 的 `401` 映射认证错误、`429` 映射限流、`5xx` 映射网络错误；`403` 表示套餐不含该数据集，映射为数据错误且不触发重试。
-- yfinance 无登录步骤；`YFRateLimitError` 映射限流，价格/数据缺失与无效参数映射数据错误，`ConnectionError` / timeout 映射网络错误；空 DataFrame 是正常结果而非异常。
+Error mapping is part of the adapter contract: FinzData maps `401` to auth error, `429` to rate limit, `5xx` to network error, and `403` to a data error that is not retried. yfinance maps `YFRateLimitError` to rate limit, missing / invalid data to data errors, and connection / timeout errors to network errors.
 
-## 文档
+---
 
-- [开发指南](docs/development-guide.md)
+## 7. Documentation and examples
+
+- [Development guide](docs/development-guide.md) — execution chain, adding a source, policy and key-pool internals
+- [Examples](examples/README.md) — six runnable scripts that need no real SDK or network
+
+| Example | What it shows |
+| --- | --- |
+| `01_custom_adapter.py` | Implementing `BaseAdapter` and collecting from an in-memory source |
+| `02_fake_mode.py` | Validating a request with `fake=True` and no SDK installed |
+| `03_policies.py` | Injecting retry and rate-limit policies for a flaky source |
+| `04_key_rotation.py` | Splitting multiple keys and rotating on a simulated 429 |
+| `05_framework_pagination.py` | Forward page-number pagination driven by `options` |
+| `06_multi_source.py` | Registering several sources and reusing adapter instances |
+
+---
+
+## 8. Tests
+
+```bash
+uv run --extra test python -m pytest tests -q
+# or: python -m pytest tests -q
+```
+
+The suite covers units, end-to-end collection, adapter behavior, executed examples, public exports and bilingual documentation.
+
+---
+
+## 9. License
+
+MIT. See [LICENSE](LICENSE).

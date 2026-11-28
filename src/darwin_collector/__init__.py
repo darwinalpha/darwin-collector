@@ -16,7 +16,7 @@ from .backend import Backend, resolve_backend
 from .policies import KeyRotationPolicy
 from .key_pool import KeyPool, split_keys
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "CollectRequest",
